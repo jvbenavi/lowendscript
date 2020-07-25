@@ -243,8 +243,8 @@ function install_mysql {
 
 [mysqld]
 key_buffer = 12M
-query_cache_size = 0
-table_cache = 32
+query_cache_limit = 256K
+query_cache_size = 4M
 
 init_connect='SET collation_connection = utf8_unicode_ci'
 init_connect='SET NAMES utf8' 
@@ -252,10 +252,11 @@ character-set-server = utf8
 collation-server = utf8_unicode_ci 
 skip-character-set-client-handshake
 
-default_storage_engine=MyISAM
+default_tmp_storage_engine = MyISAM  #  -----  added for newer versions of mysql
+default_storage_engine = MyISAM
 skip-innodb
 
-log-slow-queries=/var/log/mysql/slow-queries.log
+#log-slow-queries=/var/log/mysql/slow-queries.log  --- error in newer versions of mysql
 
 [client]
 default-character-set = utf8
@@ -279,16 +280,16 @@ function install_php {
 	check_install php5-cli php5-cli
 
 	# PHP modules
-	DEBIAN_FRONTEND=noninteractive apt-get -y install php5-apc php5-suhosin php5-curl php5-gd php5-intl php5-mcrypt php-gettext php5-mysql php5-sqlite
+	DEBIAN_FRONTEND=noninteractive apt-get -y install php5-apc php5-curl php5-gd php5-intl php5-mcrypt php-gettext php5-mysql php5-sqlite
 
 	echo 'Using PHP-FPM to manage PHP processes'
 	echo ' '
 
         print_info "Taking configuration backups in /root/bkps; you may keep or delete this directory"
         mkdir /root/bkps
-	mv /etc/php5/conf.d/apc.ini /root/bkps/apc.ini
+	mv /etc/php5/conf.d/20-apc.ini /root/bkps/20-apc.ini
 
-cat > /etc/php5/conf.d/apc.ini <<END
+cat > /etc/php5/conf.d/20-apc.ini <<END
 [APC]
 extension=apc.so
 apc.enabled=1
@@ -305,31 +306,29 @@ apc.enable_cli=0
 apc.rfc1867=0
 END
 
-	mv /etc/php5/conf.d/suhosin.ini /root/bkps/suhosin.ini
-
-cat > /etc/php5/conf.d/suhosin.ini <<END
-; configuration for php suhosin module
-extension=suhosin.so
-suhosin.executor.include.whitelist="phar"
-suhosin.request.max_vars = 2048
-suhosin.post.max_vars = 2048
-suhosin.request.max_array_index_length = 256
-suhosin.post.max_array_index_length = 256
-suhosin.request.max_totalname_length = 8192
-suhosin.post.max_totalname_length = 8192
-suhosin.sql.bailout_on_error = Off
-END
+#Disable SUHOSIN
+#	mv /etc/php5/conf.d/suhosin.ini /root/bkps/suhosin.ini
+#
+#cat > /etc/php5/conf.d/suhosin.ini <<END
+#; configuration for php suhosin module
+#extension=suhosin.so
+#suhosin.executor.include.whitelist="phar"
+#suhosin.request.max_vars = 2048
+#suhosin.post.max_vars = 2048
+#suhosin.request.max_array_index_length = 256
+#suhosin.post.max_array_index_length = 256
+#suhosin.request.max_totalname_length = 8192
+#suhosin.post.max_totalname_length = 8192
+#suhosin.sql.bailout_on_error = Off
+#END
 
 	if [ -f /etc/php5/fpm/php.ini ]
 		then
 			sed -i \
-				"s/upload_max_filesize = 2M/upload_max_filesize = 200M/" \
+				"s/upload_max_filesize = 2M/upload_max_filesize = 256M/" \
 				/etc/php5/fpm/php.ini
 			sed -i \
-				"s/post_max_size = 8M/post_max_size = 200M/" \
-				/etc/php5/fpm/php.ini
-			sed -i \
-				"s/memory_limit = 128M/memory_limit = 36M/" \
+				"s/post_max_size = 8M/post_max_size = 256M/" \
 				/etc/php5/fpm/php.ini
 	fi
 
@@ -415,7 +414,8 @@ location ~ \.php$ {
 	fastcgi_temp_file_write_size 256k;
 	fastcgi_intercept_errors    on;
 	fastcgi_ignore_client_abort off;
-	fastcgi_pass 127.0.0.1:9000;
+	#fastcgi_pass 127.0.0.1:9000;
+	fastcgi_pass unix:/var/run/php5-fpm.sock;
 
 }
 # PHP search for file Exploit:
@@ -629,7 +629,8 @@ server {
     {
         try_files \$uri =404;
 
-        fastcgi_pass 127.0.0.1:9000;
+        #fastcgi_pass 127.0.0.1:9000;
+        fastcgi_pass unix:/var/run/php5-fpm.sock;
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME /var/www/$1/public\$fastcgi_script_name;
         include fastcgi_params;
@@ -829,36 +830,36 @@ function install_ps_mem {
 # Update apt sources (Ubuntu only; not yet supported for debian)
 ############################################################
 function update_apt_sources {
-	eval `grep '^DISTRIB_CODENAME=' /etc/*-release 2>/dev/null`
+	codename=`lsb_release --codename | cut -f2`
 
-	if [ "$DISTRIB_CODENAME" == "" ]
+	if [ "$codename" == "" ]
 	then
-		die "Unknown Ubuntu flavor $DISTRIB_CODENAME"
+		die "Unknown Ubuntu flavor $codename"
 	fi
 
 	cat > /etc/apt/sources.list <<END
 ## main & restricted repositories
-deb http://us.archive.ubuntu.com/ubuntu/ $DISTRIB_CODENAME main restricted
-deb-src http://us.archive.ubuntu.com/ubuntu/ $DISTRIB_CODENAME main restricted
+deb http://us.archive.ubuntu.com/ubuntu/ $codename main restricted
+deb-src http://us.archive.ubuntu.com/ubuntu/ $codename main restricted
 
-deb http://security.ubuntu.com/ubuntu $DISTRIB_CODENAME-updates main restricted
-deb-src http://security.ubuntu.com/ubuntu $DISTRIB_CODENAME-updates main restricted
+deb http://security.ubuntu.com/ubuntu $codename-updates main restricted
+deb-src http://security.ubuntu.com/ubuntu $codename-updates main restricted
 
-deb http://security.ubuntu.com/ubuntu $DISTRIB_CODENAME-security main restricted
-deb-src http://security.ubuntu.com/ubuntu $DISTRIB_CODENAME-security main restricted
+deb http://security.ubuntu.com/ubuntu $codename-security main restricted
+deb-src http://security.ubuntu.com/ubuntu $codename-security main restricted
 
 ## universe repositories - uncomment to enable
-deb http://us.archive.ubuntu.com/ubuntu/ $DISTRIB_CODENAME universe
-deb-src http://us.archive.ubuntu.com/ubuntu/ $DISTRIB_CODENAME universe
+deb http://us.archive.ubuntu.com/ubuntu/ $codename universe
+deb-src http://us.archive.ubuntu.com/ubuntu/ $codename universe
 
-deb http://us.archive.ubuntu.com/ubuntu/ $DISTRIB_CODENAME-updates universe
-deb-src http://us.archive.ubuntu.com/ubuntu/ $DISTRIB_CODENAME-updates universe
+deb http://us.archive.ubuntu.com/ubuntu/ $codename-updates universe
+deb-src http://us.archive.ubuntu.com/ubuntu/ $codename-updates universe
 
-deb http://security.ubuntu.com/ubuntu $DISTRIB_CODENAME-security universe
-deb-src http://security.ubuntu.com/ubuntu $DISTRIB_CODENAME-security universe
+deb http://security.ubuntu.com/ubuntu $codename-security universe
+deb-src http://security.ubuntu.com/ubuntu $codename-security universe
 END
 
-	print_info "/etc/apt/sources.list updated for "$DISTRIB_CODENAME
+	print_info "/etc/apt/sources.list updated for "$codename
 }
 
 ############################################################
@@ -868,14 +869,14 @@ function install_vzfree {
 	print_warn "build-essential package is now being installed which will take additional diskspace"
 	check_install build-essential build-essential
 	cd ~
-	wget http://hostingfu.com/files/vzfree/vzfree-0.1.tgz -O vzfree-0.1.tgz
-	tar -vxf vzfree-0.1.tgz
-	cd vzfree-0.1
+	wget https://github.com/lowendbox/vzfree/archive/master.zip -O vzfree.zip
+	unzip vzfree.zip
+	cd vzfree-master
 	make && make install
 	cd ..
 	vzfree
 	print_info "vzfree has been installed"
-	rm -fr vzfree-0.1 vzfree-0.1.tgz
+	rm -fr vzfree-master vzfree.zip
 }
 
 ############################################################
@@ -904,6 +905,11 @@ function install_webmin {
 	dpkg -i /tmp/webmin.deb
 	rm -fr /tmp/webmin.deb
 	print_warn "Special Note: If the installation ends with an error, please run it again"
+}
+
+function install_curl {
+	print_info "Checking curl"
+	check_install curl curl
 }
 
 ############################################################
@@ -1277,6 +1283,7 @@ system)
 	install_iotop
 	install_iftop
 	install_syslogd
+	install_curl
 	apt_clean
 	;;
 *)
